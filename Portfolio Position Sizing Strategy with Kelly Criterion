@@ -1,0 +1,200 @@
+import numpy as np
+from scipy.stats import bernoulli, wilcoxon, rankdata
+import matplotlib.pyplot as plt
+
+win = 6
+loss = 5
+b = win / loss
+win_probability = 0.5
+lose_probability = 1 - win_probability
+
+W_0 = 50
+
+f_kelly = max(0, win_probability - (lose_probability / b))
+f_under = 1/5 * f_kelly
+f_over = 2 * f_kelly
+
+print(f"Kelly Bet Size: {f_kelly}")
+
+trials = 1000
+flips = 100
+
+wealth_kelly = np.zeros((trials, flips))
+wealth_under = np.zeros((trials, flips))
+wealth_over = np.zeros((trials, flips))
+
+wealth_kelly[:, 0] = W_0
+wealth_under[:, 0] = W_0
+wealth_over[:, 0] = W_0
+
+# Optional: reproducible simulation
+np.random.seed(42)
+
+for trial in range(trials):
+    for flip in range(flips - 1):
+
+        # Same outcome is applied to all 3 strategies.
+        # This makes the later comparison paired.
+        outcome = bernoulli.rvs(win_probability)
+
+        if outcome == 0:
+            wealth_kelly[trial, flip + 1] = (
+                (1 - f_kelly) * wealth_kelly[trial, flip]
+            )
+            wealth_under[trial, flip + 1] = (
+                (1 - f_under) * wealth_under[trial, flip]
+            )
+            wealth_over[trial, flip + 1] = (
+                (1 - f_over) * wealth_over[trial, flip]
+            )
+
+        else:
+            wealth_kelly[trial, flip + 1] = (
+                (1 + b * f_kelly) * wealth_kelly[trial, flip]
+            )
+            wealth_under[trial, flip + 1] = (
+                (1 + b * f_under) * wealth_under[trial, flip]
+            )
+            wealth_over[trial, flip + 1] = (
+                (1 + b * f_over) * wealth_over[trial, flip]
+            )
+
+
+# ---------------------------------------------------
+# PATH-LEVEL LOG GROWTH
+# ---------------------------------------------------
+
+final_wealth_kelly = wealth_kelly[:, -1]
+final_wealth_under = wealth_under[:, -1]
+final_wealth_over = wealth_over[:, -1]
+
+log_growth_kelly = (
+    np.log(final_wealth_kelly / W_0) / (flips - 1)
+)
+
+log_growth_under = (
+    np.log(final_wealth_under / W_0) / (flips - 1)
+)
+
+log_growth_over = (
+    np.log(final_wealth_over / W_0) / (flips - 1)
+)
+
+print("\nAverage Log Growth")
+print(f"Kelly: {100*np.mean(log_growth_kelly):.4f}%")
+print(f"Under: {100*np.mean(log_growth_under):.4f}%")
+print(f"Over:  {100*np.mean(log_growth_over):.4f}%")
+
+
+# ---------------------------------------------------
+# PAIRED WILCOXON SIGNED-RANK TESTS
+# ---------------------------------------------------
+# H0: Kelly log growth is not greater than comparator
+# H1: Kelly log growth is greater
+
+kelly_vs_under = wilcoxon(
+    log_growth_kelly,
+    log_growth_under,
+    alternative="greater"
+)
+
+kelly_vs_over = wilcoxon(
+    log_growth_kelly,
+    log_growth_over,
+    alternative="greater"
+)
+
+print("\nWilcoxon Tests")
+print(
+    f"Kelly > Under-sized: "
+    f"W={kelly_vs_under.statistic:.0f}, "
+    f"p={kelly_vs_under.pvalue:.3e}"
+)
+
+print(
+    f"Kelly > Over-sized: "
+    f"W={kelly_vs_over.statistic:.0f}, "
+    f"p={kelly_vs_over.pvalue:.3e}"
+)
+
+
+# ---------------------------------------------------
+# RANK-BISERIAL EFFECT SIZE
+# ---------------------------------------------------
+# Appropriate effect-size measure for paired Wilcoxon test.
+# +1 means Kelly dominates almost all paired observations.
+#  0 means no systematic advantage.
+# -1 means comparator dominates.
+
+def paired_rank_biserial(x, y):
+    differences = np.asarray(x) - np.asarray(y)
+
+    # Wilcoxon ignores exact zero differences
+    differences = differences[differences != 0]
+
+    ranks = rankdata(np.abs(differences))
+
+    positive_rank_sum = ranks[differences > 0].sum()
+    negative_rank_sum = ranks[differences < 0].sum()
+
+    return (
+        (positive_rank_sum - negative_rank_sum)
+        / (positive_rank_sum + negative_rank_sum)
+    )
+
+
+rbc_under = paired_rank_biserial(
+    log_growth_kelly,
+    log_growth_under
+)
+
+rbc_over = paired_rank_biserial(
+    log_growth_kelly,
+    log_growth_over
+)
+
+print("\nRank-Biserial Effect Sizes")
+print(f"Kelly vs Under-sized: {rbc_under:.3f}")
+print(f"Kelly vs Over-sized:  {rbc_over:.3f}")
+
+
+# ---------------------------------------------------
+# ADDITIONAL INTERPRETABLE STATISTICS
+# ---------------------------------------------------
+
+median_advantage_under = np.median(
+    log_growth_kelly - log_growth_under
+)
+
+median_advantage_over = np.median(
+    log_growth_kelly - log_growth_over
+)
+
+fraction_beating_under = np.mean(
+    log_growth_kelly > log_growth_under
+)
+
+fraction_beating_over = np.mean(
+    log_growth_kelly > log_growth_over
+)
+
+print("\nPaired Performance")
+print(
+    f"Median Kelly advantage vs Under-sized: "
+    f"{100*median_advantage_under:.4f}% log growth / round"
+)
+
+print(
+    f"Median Kelly advantage vs Over-sized: "
+    f"{100*median_advantage_over:.4f}% log growth / round"
+)
+
+print(
+    f"Kelly beat Under-sized on "
+    f"{100*fraction_beating_under:.1f}% of paths"
+)
+
+print(
+    f"Kelly beat Over-sized on "
+    f"{100*fraction_beating_over:.1f}% of paths"
+)
